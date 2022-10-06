@@ -1,15 +1,24 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import {
+  createSlice,
+  createAsyncThunk,
+  createSelector,
+  createEntityAdapter,
+} from '@reduxjs/toolkit';
 import axios from 'axios';
 import { sub } from 'date-fns';
 
 const POSTS_URL = 'https://jsonplaceholder.typicode.com/posts';
 
+const postsAdapter = createEntityAdapter({
+  sortComparer: (a, b) => b.date.localeCompare(a.date),
+});
+
 // initial state of the post slice
-const initialState = {
-  posts: [],
+const initialState = postsAdapter.getInitialState({
   status: 'idle', // idle, loading, succeeded, failed
   error: null,
-};
+  count: 0,
+});
 
 // async thunk to fetch posts from the api
 export const fetchPosts = createAsyncThunk('posts/fetchPosts', async () => {
@@ -54,12 +63,15 @@ const postsSlice = createSlice({
   reducers: {
     reactionAdded(state, action) {
       const { postId, reaction } = action.payload;
-      const existingPost = state.posts.find((post) => post.id === postId);
+      const existingPost = state.entities[postId];
       if (existingPost) {
         existingPost.reactions[reaction]++;
       }
     },
-  }, // end of reducer
+    increaseCount(state, action) {
+      state.count++;
+    },
+  },
 
   // extra reducer that were not part of the original slice
   extraReducers(builder) {
@@ -86,7 +98,7 @@ const postsSlice = createSlice({
         });
 
         // Add any fetched posts to the array
-        state.posts = state.posts.concat(loadedPosts);
+        postsAdapter.upsertMany(state, loadedPosts);
       })
       .addCase(fetchPosts.rejected, (state, action) => {
         state.status = 'failed';
@@ -107,7 +119,7 @@ const postsSlice = createSlice({
           eyes: 0,
         };
         console.log(action.payload);
-        state.posts.push(action.payload);
+        postsAdapter.addOne(state, action.payload);
       })
       // update post
       .addCase(updatePost.fulfilled, (state, action) => {
@@ -116,10 +128,8 @@ const postsSlice = createSlice({
           console.log(action.payload);
           return;
         }
-        const { id } = action.payload;
         action.payload.date = new Date().toISOString();
-        const posts = state.posts.filter((post) => post.id !== id);
-        state.posts = [...posts, action.payload];
+        postsAdapter.upsertOne(state, action.payload);
       })
 
       // delete post
@@ -131,21 +141,28 @@ const postsSlice = createSlice({
         }
 
         const { id } = action.payload;
-        const posts = state.posts.filter((post) => post.id !== id);
-        state.posts = posts;
+        postsAdapter.removeOne(state, id);
       });
   },
 });
 
-// selects all posts from the state
-export const selectAllPosts = (state) => state.posts.posts;
+export const {
+  selectAll: selectAllPosts,
+  selectById: selectPostById,
+  selectIds: selectPostIds,
+  // Pass in a selector that returns a posts slice of state
+} = postsAdapter.getSelectors((state) => state.posts);
+
 export const getPostsStatus = (state) => state.posts.status;
 export const getPostsError = (state) => state.posts.error;
+export const getCount = (state) => state.posts.count;
 
-// get single post by id
-export const selectPostById = (state, postId) =>
-  state.posts.posts.find((post) => post.id === postId);
+// memoized selector
+export const selectPostsByUser = createSelector(
+  [selectAllPosts, (state, userId) => userId],
+  (posts, userId) => posts.filter((post) => post.userId === userId)
+);
 
-export const { postAdded, reactionAdded } = postsSlice.actions;
+export const { increaseCount, reactionAdded } = postsSlice.actions;
 
 export default postsSlice.reducer;
